@@ -1,0 +1,8 @@
+# air's build output
+tmp/
+
+# local secrets / config (commit .env.example instead)
+.env
+
+# private learning notes (explanations for committed code)
+PRIVATENOTES.md
