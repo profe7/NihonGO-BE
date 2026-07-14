@@ -8,6 +8,7 @@ import (
 
 	"nihongo/internal/auth"
 	"nihongo/internal/config"
+	"nihongo/internal/hiragana"
 	"nihongo/internal/user"
 )
 
@@ -24,6 +25,9 @@ func NewRouter(pool *pgxpool.Pool, cfg config.Config) *gin.Engine {
 	refresh := auth.NewRefreshService(refreshRepo, auth.RefreshTokenTTL)
 	authHandler := auth.NewHandler(userRepo, tokens, refresh)
 
+	hiraganaRepo := hiragana.NewRepository(pool)
+	hiraganaHandler := hiragana.NewHandler(hiraganaRepo)
+
 	authGroup := r.Group("/auth")
 	{
 		authGroup.POST("/register", authHandler.Register)
@@ -36,6 +40,9 @@ func NewRouter(pool *pgxpool.Pool, cfg config.Config) *gin.Engine {
 	protected.Use(auth.RequireAuth(tokens))
 	{
 		protected.GET("/me", authHandler.Me)
+
+		protected.GET("/hiragana/quiz", hiraganaHandler.Quiz)
+		protected.POST("/hiragana/quiz/answer", hiraganaHandler.Answer)
 	}
 
 	return r
