@@ -13,17 +13,17 @@ import (
 )
 
 type fakeStore struct {
-	randomFn       func(ctx context.Context) (Card, error)
-	randomOthersFn func(ctx context.Context, excludeID int64, n int) ([]Card, error)
+	randomFn       func(ctx context.Context, characters []string) (Card, error)
+	randomOthersFn func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	findByIDFn     func(ctx context.Context, id int64) (Card, error)
 }
 
-func (f fakeStore) Random(ctx context.Context) (Card, error) {
-	return f.randomFn(ctx)
+func (f fakeStore) Random(ctx context.Context, characters []string) (Card, error) {
+	return f.randomFn(ctx, characters)
 }
 
-func (f fakeStore) RandomOthers(ctx context.Context, excludeID int64, n int) ([]Card, error) {
-	return f.randomOthersFn(ctx, excludeID, n)
+func (f fakeStore) RandomOthers(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error) {
+	return f.randomOthersFn(ctx, excludeID, n, characters)
 }
 
 func (f fakeStore) FindByID(ctx context.Context, id int64) (Card, error) {
@@ -49,10 +49,10 @@ func doJSON(r *gin.Engine, method, path, body string) *httptest.ResponseRecorder
 
 func TestQuiz(t *testing.T) {
 	store := fakeStore{
-		randomFn: func(ctx context.Context) (Card, error) {
+		randomFn: func(ctx context.Context, characters []string) (Card, error) {
 			return Card{ID: 1, Character: "あ", Romaji: "a"}, nil
 		},
-		randomOthersFn: func(ctx context.Context, excludeID int64, n int) ([]Card, error) {
+		randomOthersFn: func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error) {
 			return []Card{
 				{ID: 2, Character: "い", Romaji: "i"},
 				{ID: 3, Character: "う", Romaji: "u"},
@@ -83,6 +83,76 @@ func TestQuiz(t *testing.T) {
 	}
 	if !slices.Contains(resp.Options, "a") {
 		t.Errorf("options = %v, missing correct answer a", resp.Options)
+	}
+}
+
+func TestQuiz_CharacterPool(t *testing.T) {
+	var gotRandomPool []string
+	var gotOthersPool []string
+
+	store := fakeStore{
+		randomFn: func(ctx context.Context, characters []string) (Card, error) {
+			gotRandomPool = characters
+			return Card{ID: 1, Character: "あ", Romaji: "a"}, nil
+		},
+		randomOthersFn: func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error) {
+			gotOthersPool = characters
+			return []Card{{ID: 2, Character: "い", Romaji: "i"}}, nil
+		},
+	}
+	r := setup(store)
+
+	w := doJSON(r, http.MethodGet, "/hiragana/quiz?characters=あ,い,う", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	want := []string{"あ", "い", "う"}
+	if !slices.Equal(gotRandomPool, want) {
+		t.Errorf("Random pool = %v, want %v", gotRandomPool, want)
+	}
+	if !slices.Equal(gotOthersPool, want) {
+		t.Errorf("RandomOthers pool = %v, want %v", gotOthersPool, want)
+	}
+}
+
+func TestQuiz_NoCharactersParamMeansNilPool(t *testing.T) {
+	var gotPool []string
+	sawCall := false
+
+	store := fakeStore{
+		randomFn: func(ctx context.Context, characters []string) (Card, error) {
+			gotPool = characters
+			sawCall = true
+			return Card{ID: 1, Character: "あ", Romaji: "a"}, nil
+		},
+		randomOthersFn: func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error) {
+			return nil, nil
+		},
+	}
+	r := setup(store)
+
+	doJSON(r, http.MethodGet, "/hiragana/quiz", "")
+
+	if !sawCall {
+		t.Fatal("Random was never called")
+	}
+	if gotPool != nil {
+		t.Errorf("pool = %v, want nil (no filter) when characters param is absent", gotPool)
+	}
+}
+
+func TestQuiz_NoMatchingCharactersIs400(t *testing.T) {
+	store := fakeStore{
+		randomFn: func(ctx context.Context, characters []string) (Card, error) {
+			return Card{}, ErrNotFound
+		},
+	}
+	r := setup(store)
+
+	w := doJSON(r, http.MethodGet, "/hiragana/quiz?characters=ZZZ", "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
 

@@ -13,6 +13,7 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	JWTSecret  string
+	CORSOrigin string
 }
 
 func Load() Config {
@@ -24,6 +25,7 @@ func Load() Config {
 		DBPassword: getenv("DB_PASSWORD", "nihongo_dev_password"),
 		DBName:     getenv("DB_NAME", "nihongo"),
 		JWTSecret:  getenv("JWT_SECRET", "dev-insecure-secret-change-me"),
+		CORSOrigin: getenv("CORS_ORIGIN", "http://localhost:5173"),
 	}
 }
 

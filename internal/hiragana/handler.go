@@ -10,8 +10,8 @@ import (
 )
 
 type Store interface {
-	Random(ctx context.Context) (Card, error)
-	RandomOthers(ctx context.Context, excludeID int64, n int) ([]Card, error)
+	Random(ctx context.Context, characters []string) (Card, error)
+	RandomOthers(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	FindByID(ctx context.Context, id int64) (Card, error)
 }
 
@@ -24,13 +24,19 @@ func NewHandler(cards Store) *Handler {
 }
 
 func (h *Handler) Quiz(c *gin.Context) {
-	target, err := h.cards.Random(c.Request.Context())
+	characters := parseCharacters(c.Query("characters"))
+
+	target, err := h.cards.Random(c.Request.Context(), characters)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no hiragana cards match the given characters"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not build quiz"})
 		return
 	}
 
-	distractors, err := h.cards.RandomOthers(c.Request.Context(), target.ID, 3)
+	distractors, err := h.cards.RandomOthers(c.Request.Context(), target.ID, 3, characters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not build quiz"})
 		return
@@ -46,6 +52,25 @@ func (h *Handler) Quiz(c *gin.Context) {
 		"character": target.Character,
 		"options":   BuildOptions(target.Romaji, distractorRomaji),
 	})
+}
+
+func parseCharacters(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	characters := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			characters = append(characters, p)
+		}
+	}
+	if len(characters) == 0 {
+		return nil
+	}
+	return characters
 }
 
 type answerRequest struct {

@@ -15,6 +15,8 @@ import (
 func NewRouter(pool *pgxpool.Pool, cfg config.Config) *gin.Engine {
 	r := gin.Default()
 
+	r.Use(corsMiddleware(cfg.CORSOrigin))
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -46,4 +48,19 @@ func NewRouter(pool *pgxpool.Pool, cfg config.Config) *gin.Engine {
 	}
 
 	return r
+}
+
+func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", allowedOrigin)
+		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
 }
