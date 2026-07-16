@@ -31,7 +31,7 @@ func (r *Repository) Random(ctx context.Context, characters []string) (Card, err
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Card{}, ErrNotFound
 		}
-		return Card{}, err
+		return Card{}, fmt.Errorf("select random hiragana card: %w", err)
 	}
 	return c, nil
 }
@@ -46,7 +46,7 @@ func (r *Repository) RandomOthers(ctx context.Context, excludeID int64, n int, c
 
 	rows, err := r.pool.Query(ctx, q, excludeID, n, characters)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("select hiragana distractors: %w", err)
 	}
 	defer rows.Close()
 
@@ -54,11 +54,14 @@ func (r *Repository) RandomOthers(ctx context.Context, excludeID int64, n int, c
 	for rows.Next() {
 		var c Card
 		if err := rows.Scan(&c.ID, &c.Character, &c.Romaji); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan hiragana distractors: %w", err)
 		}
 		cards = append(cards, c)
 	}
-	return cards, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate hiragana distractors: %w", err)
+	}
+	return cards, nil
 }
 
 func (r *Repository) FindByID(ctx context.Context, id int64) (Card, error) {
@@ -69,7 +72,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (Card, error) {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Card{}, ErrNotFound
 		}
-		return Card{}, err
+		return Card{}, fmt.Errorf("find hiragana card %d: %w", id, err)
 	}
 	return c, nil
 }
