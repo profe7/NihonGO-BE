@@ -14,7 +14,7 @@ type Store interface {
 	Random(ctx context.Context, characters []string) (Card, error)
 	RandomOthers(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	FindByID(ctx context.Context, id int64) (Card, error)
-	RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) (error)
+	RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) error
 }
 
 type Handler struct {
@@ -108,7 +108,7 @@ func (h *Handler) Answer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error tracking progress"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"correct":        correct,
 		"correct_answer": card.Romaji,

@@ -2,8 +2,8 @@ package hiragana
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	quizPath = "/hiragana/quiz"
+	quizPath   = "/hiragana/quiz"
 	answerPath = "/hiragana/quiz/answer"
 )
 
@@ -22,7 +22,7 @@ type fakeStore struct {
 	randomFn        func(ctx context.Context, characters []string) (Card, error)
 	randomOthersFn  func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	findByIDFn      func(ctx context.Context, id int64) (Card, error)
-	recordAttemptFn func(ctx context.Context, userID, cardID int64, correct bool) (error)
+	recordAttemptFn func(ctx context.Context, userID, cardID int64, correct bool) error
 }
 
 func (f fakeStore) Random(ctx context.Context, characters []string) (Card, error) {
@@ -37,7 +37,7 @@ func (f fakeStore) FindByID(ctx context.Context, id int64) (Card, error) {
 	return f.findByIDFn(ctx, id)
 }
 
-func (f fakeStore) RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) (error) {
+func (f fakeStore) RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) error {
 	return f.recordAttemptFn(ctx, userID, cardID, correct)
 }
 
@@ -179,7 +179,7 @@ func TestAnswer(t *testing.T) {
 			}
 			return Card{ID: id, Character: "な", Romaji: "na"}, nil
 		},
-		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) error {
 			return nil
 		},
 	}
@@ -239,7 +239,7 @@ func TestAnswer_RecordAttempt(t *testing.T) {
 			}
 			return Card{ID: id, Character: "な", Romaji: "na"}, nil
 		},
-		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) error {
 			gotUserID = userID
 			gotCardID = cardID
 			gotCorrect = correct
@@ -258,10 +258,10 @@ func TestAnswer_RecordAttempt(t *testing.T) {
 	if gotCardID != 1 {
 		t.Fatalf("cardID = %d, want 1; body=%s", gotCardID, w.Body.String())
 	}
-	if gotCorrect != true {
+	if !gotCorrect {
 		t.Fatalf("correct = %t, want true; body=%s", gotCorrect, w.Body.String())
 	}
-	if gotCalled != true {
+	if !gotCalled {
 		t.Fatalf("called = %t, want true; body=%s", gotCalled, w.Body.String())
 	}
 }
@@ -274,7 +274,7 @@ func TestAnswer_RecordAttemptFailureIs500(t *testing.T) {
 			}
 			return Card{ID: id, Character: "な", Romaji: "na"}, nil
 		},
-		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) error {
 			return errors.New("db down")
 		},
 	}
@@ -293,7 +293,7 @@ func TestAnswer_FindByIDFailureIs500(t *testing.T) {
 		findByIDFn: func(ctx context.Context, id int64) (Card, error) {
 			return Card{}, errors.New("internal server error")
 		},
-		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) error {
 			return nil
 		},
 	}
@@ -323,16 +323,13 @@ func TestAnswer_Unauthorized(t *testing.T) {
 }
 
 func TestAnswer_RecordAttemptIncorrectAnswer(t *testing.T) {
-	var gotUserID, gotCardID int64
 	var gotCorrect, gotCalled bool
 
-	store := fakeStore {
+	store := fakeStore{
 		findByIDFn: func(ctx context.Context, id int64) (Card, error) {
 			return Card{ID: 1, Character: "な", Romaji: "na"}, nil
 		},
-		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
-			gotUserID = userID
-			gotCardID = cardID
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) error {
 			gotCorrect = correct
 			gotCalled = true
 			return nil
@@ -343,10 +340,41 @@ func TestAnswer_RecordAttemptIncorrectAnswer(t *testing.T) {
 
 	w := doJSON(r, http.MethodPost, answerPath, `{"id":2,"answer":"ka"}`)
 
-	if gotCorrect != false {
+	if gotCorrect {
 		t.Fatalf("correct = %t, want false; body=%s", gotCorrect, w.Body.String())
 	}
-	if gotCalled != true {
+	if !gotCalled {
 		t.Fatalf("called = %t, want true; body=%s", gotCalled, w.Body.String())
+	}
+}
+
+func TestParseCharacters(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"single character", "あ", []string{"あ"}},
+		{"trims whitespace", " あ, い ,う ", []string{"あ", "い", "う"}},
+		{"ignores empty entries", "あ,, ,い", []string{"あ", "い"}},
+		{"only separators", ", ,", nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseCharacters(tc.raw)
+
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("parseCharacters(%q) = %v, want nil", tc.raw, got)
+				}
+				return
+			}
+
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("parseCharacters(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
