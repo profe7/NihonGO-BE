@@ -2,6 +2,7 @@ package hiragana
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,10 +13,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	quizPath = "/hiragana/quiz"
+	answerPath = "/hiragana/quiz/answer"
+)
+
 type fakeStore struct {
-	randomFn       func(ctx context.Context, characters []string) (Card, error)
-	randomOthersFn func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
-	findByIDFn     func(ctx context.Context, id int64) (Card, error)
+	randomFn        func(ctx context.Context, characters []string) (Card, error)
+	randomOthersFn  func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
+	findByIDFn      func(ctx context.Context, id int64) (Card, error)
+	recordAttemptFn func(ctx context.Context, userID, cardID int64, correct bool) (error)
 }
 
 func (f fakeStore) Random(ctx context.Context, characters []string) (Card, error) {
@@ -30,12 +37,20 @@ func (f fakeStore) FindByID(ctx context.Context, id int64) (Card, error) {
 	return f.findByIDFn(ctx, id)
 }
 
+func (f fakeStore) RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) (error) {
+	return f.recordAttemptFn(ctx, userID, cardID, correct)
+}
+
 func setup(store Store) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	h := NewHandler(store)
 	r := gin.New()
-	r.GET("/hiragana/quiz", h.Quiz)
-	r.POST("/hiragana/quiz/answer", h.Answer)
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", int64(1))
+		c.Next()
+	})
+	r.GET(quizPath, h.Quiz)
+	r.POST(answerPath, h.Answer)
 	return r
 }
 
@@ -62,7 +77,7 @@ func TestQuiz(t *testing.T) {
 	}
 	r := setup(store)
 
-	w := doJSON(r, http.MethodGet, "/hiragana/quiz", "")
+	w := doJSON(r, http.MethodGet, quizPath, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -102,7 +117,7 @@ func TestQuiz_CharacterPool(t *testing.T) {
 	}
 	r := setup(store)
 
-	w := doJSON(r, http.MethodGet, "/hiragana/quiz?characters=あ,い,う", "")
+	w := doJSON(r, http.MethodGet, quizPath+"?characters=あ,い,う", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -132,7 +147,7 @@ func TestQuiz_NoCharactersParamMeansNilPool(t *testing.T) {
 	}
 	r := setup(store)
 
-	doJSON(r, http.MethodGet, "/hiragana/quiz", "")
+	doJSON(r, http.MethodGet, quizPath, "")
 
 	if !sawCall {
 		t.Fatal("Random was never called")
@@ -150,7 +165,7 @@ func TestQuiz_NoMatchingCharactersIs400(t *testing.T) {
 	}
 	r := setup(store)
 
-	w := doJSON(r, http.MethodGet, "/hiragana/quiz?characters=ZZZ", "")
+	w := doJSON(r, http.MethodGet, quizPath+"?characters=ZZZ", "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
@@ -163,6 +178,9 @@ func TestAnswer(t *testing.T) {
 				return Card{}, ErrNotFound
 			}
 			return Card{ID: id, Character: "な", Romaji: "na"}, nil
+		},
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+			return nil
 		},
 	}
 	r := setup(store)
@@ -179,7 +197,7 @@ func TestAnswer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := doJSON(r, http.MethodPost, "/hiragana/quiz/answer", tc.body)
+			w := doJSON(r, http.MethodPost, answerPath, tc.body)
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.wantStatus, w.Body.String())
 			}
@@ -196,16 +214,139 @@ func TestAnswer(t *testing.T) {
 	}
 
 	t.Run("unknown id is 404", func(t *testing.T) {
-		w := doJSON(r, http.MethodPost, "/hiragana/quiz/answer", `{"id":99,"answer":"na"}`)
+		w := doJSON(r, http.MethodPost, answerPath, `{"id":99,"answer":"na"}`)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", w.Code)
 		}
 	})
 
 	t.Run("missing field is 400", func(t *testing.T) {
-		w := doJSON(r, http.MethodPost, "/hiragana/quiz/answer", `{}`)
+		w := doJSON(r, http.MethodPost, answerPath, `{}`)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400", w.Code)
 		}
 	})
+}
+
+func TestAnswer_RecordAttempt(t *testing.T) {
+	var gotUserID, gotCardID int64
+	var gotCorrect, gotCalled bool
+
+	store := fakeStore{
+		findByIDFn: func(ctx context.Context, id int64) (Card, error) {
+			if id == 99 {
+				return Card{}, ErrNotFound
+			}
+			return Card{ID: id, Character: "な", Romaji: "na"}, nil
+		},
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+			gotUserID = userID
+			gotCardID = cardID
+			gotCorrect = correct
+			gotCalled = true
+			return nil
+		},
+	}
+
+	r := setup(store)
+
+	w := doJSON(r, http.MethodPost, answerPath, `{"id":1,"answer":"na"}`)
+
+	if gotUserID != 1 {
+		t.Fatalf("userID = %d, want 1; body=%s", gotUserID, w.Body.String())
+	}
+	if gotCardID != 1 {
+		t.Fatalf("cardID = %d, want 1; body=%s", gotCardID, w.Body.String())
+	}
+	if gotCorrect != true {
+		t.Fatalf("correct = %t, want true; body=%s", gotCorrect, w.Body.String())
+	}
+	if gotCalled != true {
+		t.Fatalf("called = %t, want true; body=%s", gotCalled, w.Body.String())
+	}
+}
+
+func TestAnswer_RecordAttemptFailureIs500(t *testing.T) {
+	store := fakeStore{
+		findByIDFn: func(ctx context.Context, id int64) (Card, error) {
+			if id == 99 {
+				return Card{}, ErrNotFound
+			}
+			return Card{ID: id, Character: "な", Romaji: "na"}, nil
+		},
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+			return errors.New("db down")
+		},
+	}
+
+	r := setup(store)
+
+	w := doJSON(r, http.MethodPost, answerPath, `{"id":1,"answer":"na"}`)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("error = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestAnswer_FindByIDFailureIs500(t *testing.T) {
+	store := fakeStore{
+		findByIDFn: func(ctx context.Context, id int64) (Card, error) {
+			return Card{}, errors.New("internal server error")
+		},
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+			return nil
+		},
+	}
+
+	r := setup(store)
+
+	w := doJSON(r, http.MethodPost, answerPath, `{"id":1,"answer":"na"}`)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("error = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestAnswer_Unauthorized(t *testing.T) {
+	store := fakeStore{}
+
+	h := NewHandler(store)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST(answerPath, h.Answer)
+
+	w := doJSON(r, http.MethodPost, answerPath, `{"id":1,"answer":"na"}`)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("error = %d, want 401; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestAnswer_RecordAttemptIncorrectAnswer(t *testing.T) {
+	var gotUserID, gotCardID int64
+	var gotCorrect, gotCalled bool
+
+	store := fakeStore {
+		findByIDFn: func(ctx context.Context, id int64) (Card, error) {
+			return Card{ID: 1, Character: "な", Romaji: "na"}, nil
+		},
+		recordAttemptFn: func(ctx context.Context, userID, cardID int64, correct bool) (error) {
+			gotUserID = userID
+			gotCardID = cardID
+			gotCorrect = correct
+			gotCalled = true
+			return nil
+		},
+	}
+
+	r := setup(store)
+
+	w := doJSON(r, http.MethodPost, answerPath, `{"id":2,"answer":"ka"}`)
+
+	if gotCorrect != false {
+		t.Fatalf("correct = %t, want false; body=%s", gotCorrect, w.Body.String())
+	}
+	if gotCalled != true {
+		t.Fatalf("called = %t, want true; body=%s", gotCalled, w.Body.String())
+	}
 }

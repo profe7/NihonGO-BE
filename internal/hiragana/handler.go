@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"nihongo/internal/auth"
 )
 
 type Store interface {
 	Random(ctx context.Context, characters []string) (Card, error)
 	RandomOthers(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	FindByID(ctx context.Context, id int64) (Card, error)
+	RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) (error)
 }
 
 type Handler struct {
@@ -84,6 +86,11 @@ func (h *Handler) Answer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID, ok := auth.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
 
 	card, err := h.cards.FindByID(c.Request.Context(), req.ID)
 	if err != nil {
@@ -96,6 +103,12 @@ func (h *Handler) Answer(c *gin.Context) {
 	}
 
 	correct := strings.EqualFold(strings.TrimSpace(req.Answer), card.Romaji)
+	err = h.cards.RecordAttempt(c.Request.Context(), userID, card.ID, correct)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error tracking progress"})
+		return
+	}
+	
 	c.JSON(http.StatusOK, gin.H{
 		"correct":        correct,
 		"correct_answer": card.Romaji,

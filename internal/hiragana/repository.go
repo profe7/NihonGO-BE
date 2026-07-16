@@ -74,3 +74,14 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (Card, error) {
       }
       return c, nil
 }
+
+func (r *Repository) RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) (error) {
+        const q = `
+                INSERT INTO hiragana_attempts (user_id, card_id, correct)
+                VALUES ($1, $2, $3)`
+        _, err := r.pool.Exec(ctx, q, userID, cardID, correct)
+        if err != nil {
+                return err
+        }
+        return nil
+}
