@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,8 +30,10 @@ func (r *RefreshRepository) Create(ctx context.Context, userID int64, tokenHash 
 	const q = `
 		INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
 		VALUES ($1, $2, $3)`
-	_, err := r.pool.Exec(ctx, q, userID, tokenHash, expiresAt)
-	return err
+	if _, err := r.pool.Exec(ctx, q, userID, tokenHash, expiresAt); err != nil {
+		return fmt.Errorf("create refresh token: %w", err)
+	}
+	return nil
 }
 
 func (r *RefreshRepository) FindByHash(ctx context.Context, tokenHash string) (RefreshToken, error) {
@@ -47,13 +50,15 @@ func (r *RefreshRepository) FindByHash(ctx context.Context, tokenHash string) (R
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RefreshToken{}, ErrNotFound
 		}
-		return RefreshToken{}, err
+		return RefreshToken{}, fmt.Errorf("find refresh token: %w", err)
 	}
 	return rt, nil
 }
 
 func (r *RefreshRepository) Delete(ctx context.Context, tokenHash string) error {
 	const q = `DELETE FROM refresh_tokens WHERE token_hash = $1`
-	_, err := r.pool.Exec(ctx, q, tokenHash)
-	return err
+	if _, err := r.pool.Exec(ctx, q, tokenHash); err != nil {
+		return fmt.Errorf("delete refresh token: %w", err)
+	}
+	return nil
 }

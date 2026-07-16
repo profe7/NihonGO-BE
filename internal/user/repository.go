@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -36,7 +37,7 @@ func (r *Repository) Create(ctx context.Context, email, passwordHash string) (Us
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return User{}, ErrEmailTaken
 		}
-		return User{}, err
+		return User{}, fmt.Errorf("create user: %w", err)
 	}
 	return u, nil
 }
@@ -55,7 +56,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (User, error
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
-		return User{}, err
+		return User{}, fmt.Errorf("find user by email: %w", err)
 	}
 	return u, nil
 }
@@ -74,7 +75,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (User, error) {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
-		return User{}, err
+		return User{}, fmt.Errorf("find user %d: %w", id, err)
 	}
 	return u, nil
 }
