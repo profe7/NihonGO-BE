@@ -34,9 +34,24 @@ func (f fakeStore) FindByID(ctx context.Context, id int64) (user.User, error) {
 }
 
 type fakeRefreshStore struct {
-	createFn     func(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
-	findByHashFn func(ctx context.Context, tokenHash string) (user.RefreshToken, error)
-	deleteFn     func(ctx context.Context, tokenHash string) error
+	createFn func(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
+	deleteFn func(ctx context.Context, tokenHash string) error
+	rotateFn func(
+		ctx context.Context,
+		oldHash, newHash string,
+		newExpiresAt time.Time,
+	) (int64, error)
+}
+
+func (f fakeRefreshStore) Rotate(
+	ctx context.Context,
+	oldHash, newHash string,
+	newExpiresAt time.Time,
+) (int64, error) {
+	if f.rotateFn == nil {
+		return 0, user.ErrNotFound
+	}
+	return f.rotateFn(ctx, oldHash, newHash, newExpiresAt)
 }
 
 func (f fakeRefreshStore) Create(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error {
@@ -44,13 +59,6 @@ func (f fakeRefreshStore) Create(ctx context.Context, userID int64, tokenHash st
 		return nil
 	}
 	return f.createFn(ctx, userID, tokenHash, expiresAt)
-}
-
-func (f fakeRefreshStore) FindByHash(ctx context.Context, tokenHash string) (user.RefreshToken, error) {
-	if f.findByHashFn == nil {
-		return user.RefreshToken{}, user.ErrNotFound
-	}
-	return f.findByHashFn(ctx, tokenHash)
 }
 
 func (f fakeRefreshStore) Delete(ctx context.Context, tokenHash string) error {
@@ -223,13 +231,17 @@ func TestMe(t *testing.T) {
 
 func TestRefresh(t *testing.T) {
 	t.Run("valid token rotates and returns a new pair", func(t *testing.T) {
-		var deleted, created int
+		var gotOldHash, gotNewHash string
 		rstore := fakeRefreshStore{
-			findByHashFn: func(ctx context.Context, hash string) (user.RefreshToken, error) {
-				return user.RefreshToken{UserID: 4, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}, nil
+			rotateFn: func(
+				ctx context.Context,
+				oldHash, newHash string,
+				newExpiresAt time.Time,
+			) (int64, error) {
+				gotOldHash = oldHash
+				gotNewHash = newHash
+				return 4, nil
 			},
-			deleteFn: func(ctx context.Context, hash string) error { deleted++; return nil },
-			createFn: func(ctx context.Context, userID int64, hash string, exp time.Time) error { created++; return nil },
 		}
 		r, tokens := setupWithRefresh(fakeStore{}, rstore)
 
@@ -255,18 +267,22 @@ func TestRefresh(t *testing.T) {
 		if resp.RefreshToken == "" {
 			t.Error("expected a rotated refresh token")
 		}
-		if deleted != 1 {
-			t.Errorf("old token deletions = %d, want 1", deleted)
+		if gotOldHash != hashToken("old-raw") {
+			t.Error("handler flow passed the wrong old-token hash")
 		}
-		if created != 1 {
-			t.Errorf("new token creations = %d, want 1", created)
+		if gotNewHash != hashToken(resp.RefreshToken) {
+			t.Error("returned refresh token does not match the stored hash")
 		}
 	})
 
 	t.Run("unknown token is 401", func(t *testing.T) {
 		rstore := fakeRefreshStore{
-			findByHashFn: func(ctx context.Context, hash string) (user.RefreshToken, error) {
-				return user.RefreshToken{}, user.ErrNotFound
+			rotateFn: func(
+				ctx context.Context,
+				oldHash, newHash string,
+				newExpiresAt time.Time,
+			) (int64, error) {
+				return 0, user.ErrNotFound
 			},
 		}
 		r, _ := setupWithRefresh(fakeStore{}, rstore)

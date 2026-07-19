@@ -18,8 +18,12 @@ var ErrInvalidRefreshToken = errors.New("invalid refresh token")
 
 type RefreshStore interface {
 	Create(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
-	FindByHash(ctx context.Context, tokenHash string) (user.RefreshToken, error)
 	Delete(ctx context.Context, tokenHash string) error
+	Rotate(
+		ctx context.Context,
+		oldHash, newHash string,
+		newExpiresAt time.Time,
+	) (int64, error)
 }
 
 type RefreshService struct {
@@ -42,8 +46,21 @@ func (s *RefreshService) Issue(ctx context.Context, userID int64) (string, error
 	return raw, nil
 }
 
-func (s *RefreshService) Rotate(ctx context.Context, rawToken string) (string, int64, error) {
-	rt, err := s.store.FindByHash(ctx, hashToken(rawToken))
+func (s *RefreshService) Rotate(
+	ctx context.Context,
+	rawToken string,
+) (string, int64, error) {
+	newRaw, err := randomToken()
+	if err != nil {
+		return "", 0, err
+	}
+
+	userID, err := s.store.Rotate(
+		ctx,
+		hashToken(rawToken),
+		hashToken(newRaw),
+		time.Now().Add(s.ttl),
+	)
 	if err != nil {
 		if errors.Is(err, user.ErrNotFound) {
 			return "", 0, ErrInvalidRefreshToken
@@ -51,20 +68,7 @@ func (s *RefreshService) Rotate(ctx context.Context, rawToken string) (string, i
 		return "", 0, err
 	}
 
-	if time.Now().After(rt.ExpiresAt) {
-		_ = s.store.Delete(ctx, rt.TokenHash)
-		return "", 0, ErrInvalidRefreshToken
-	}
-
-	if err := s.store.Delete(ctx, rt.TokenHash); err != nil {
-		return "", 0, err
-	}
-
-	newRaw, err := s.Issue(ctx, rt.UserID)
-	if err != nil {
-		return "", 0, err
-	}
-	return newRaw, rt.UserID, nil
+	return newRaw, userID, nil
 }
 
 func (s *RefreshService) Revoke(ctx context.Context, rawToken string) error {

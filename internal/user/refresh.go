@@ -62,3 +62,35 @@ func (r *RefreshRepository) Delete(ctx context.Context, tokenHash string) error 
 	}
 	return nil
 }
+
+func (r *RefreshRepository) Rotate(
+	ctx context.Context,
+	oldHash, newHash string,
+	newExpiresAt time.Time,
+) (int64, error) {
+	const q = `
+			WITH deleted_token AS (
+					DELETE FROM refresh_tokens
+					WHERE token_hash = $1
+					RETURNING user_id, expires_at
+			)
+			INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+			SELECT user_id, $2, $3
+			FROM deleted_token
+			WHERE expires_at > now()
+			RETURNING user_id`
+	var userID int64
+	if err := r.pool.QueryRow(
+		ctx,
+		q,
+		oldHash,
+		newHash,
+		newExpiresAt,
+	).Scan(&userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("rotate refresh token: %w", err)
+	}
+	return userID, nil
+}

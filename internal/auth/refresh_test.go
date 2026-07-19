@@ -45,19 +45,19 @@ func TestRefreshService_Issue(t *testing.T) {
 }
 
 func TestRefreshService_RotateHappyPath(t *testing.T) {
-	var deletedHashes []string
-	created := 0
+	var gotOldHash, gotNewHash string
+	var gotExpiry time.Time
+
 	store := fakeRefreshStore{
-		findByHashFn: func(ctx context.Context, hash string) (user.RefreshToken, error) {
-			return user.RefreshToken{ID: 1, UserID: 9, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}, nil
-		},
-		deleteFn: func(ctx context.Context, hash string) error {
-			deletedHashes = append(deletedHashes, hash)
-			return nil
-		},
-		createFn: func(ctx context.Context, userID int64, hash string, exp time.Time) error {
-			created++
-			return nil
+		rotateFn: func(
+			ctx context.Context,
+			oldHash, newHash string,
+			newExpiresAt time.Time,
+		) (int64, error) {
+			gotOldHash = oldHash
+			gotNewHash = newHash
+			gotExpiry = newExpiresAt
+			return 9, nil
 		},
 	}
 	svc := NewRefreshService(store, time.Hour)
@@ -67,53 +67,39 @@ func TestRefreshService_RotateHappyPath(t *testing.T) {
 		t.Fatalf("Rotate: %v", err)
 	}
 	if userID != 9 {
-		t.Errorf("user id = %d, want 9", userID)
+		t.Fatalf("user ID = %d, want 9", userID)
 	}
 	if newRaw == "" {
-		t.Error("expected a new raw token")
+		t.Fatal("expected a new raw token")
 	}
-	if len(deletedHashes) != 1 {
-		t.Fatalf("delete calls = %d, want 1", len(deletedHashes))
+	if gotOldHash != hashToken("old-raw") {
+		t.Fatal("Rotate passed the wrong old-token hash")
 	}
-	if deletedHashes[0] != hashToken("old-raw") {
-		t.Error("rotation deleted the wrong token hash")
+	if gotNewHash != hashToken(newRaw) {
+		t.Fatal("Rotate stored a hash that does not match the returned raw token")
 	}
-	if created != 1 {
-		t.Errorf("create calls = %d, want 1", created)
+	if !gotExpiry.After(time.Now()) {
+		t.Fatal("new token expiry is not in the future")
 	}
 }
 
 func TestRefreshService_RotateRejectsMissing(t *testing.T) {
 	store := fakeRefreshStore{
-		findByHashFn: func(ctx context.Context, hash string) (user.RefreshToken, error) {
-			return user.RefreshToken{}, user.ErrNotFound
+		rotateFn: func(
+			ctx context.Context,
+			oldHash, newHash string,
+			newExpiresAt time.Time,
+		) (int64, error) {
+			return 0, user.ErrNotFound
 		},
 	}
 	svc := NewRefreshService(store, time.Hour)
 
-	if _, _, err := svc.Rotate(context.Background(), "whatever"); !errors.Is(err, ErrInvalidRefreshToken) {
+	if _, _, err := svc.Rotate(
+		context.Background(),
+		"whatever",
+	); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Errorf("err = %v, want ErrInvalidRefreshToken", err)
-	}
-}
-
-func TestRefreshService_RotateRejectsExpired(t *testing.T) {
-	deleted := 0
-	store := fakeRefreshStore{
-		findByHashFn: func(ctx context.Context, hash string) (user.RefreshToken, error) {
-			return user.RefreshToken{UserID: 3, TokenHash: hash, ExpiresAt: time.Now().Add(-time.Minute)}, nil
-		},
-		deleteFn: func(ctx context.Context, hash string) error {
-			deleted++
-			return nil
-		},
-	}
-	svc := NewRefreshService(store, time.Hour)
-
-	if _, _, err := svc.Rotate(context.Background(), "expired"); !errors.Is(err, ErrInvalidRefreshToken) {
-		t.Errorf("err = %v, want ErrInvalidRefreshToken", err)
-	}
-	if deleted != 1 {
-		t.Errorf("expired token cleanup deletes = %d, want 1", deleted)
 	}
 }
 
