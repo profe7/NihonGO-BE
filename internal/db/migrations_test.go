@@ -32,19 +32,26 @@ func TestRunMigrations_Idempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count < 2 {
-		t.Errorf("recorded migrations = %d, want >= 2", count)
+	if count < 6 {
+		t.Errorf("recorded migrations = %d, want >= 6", count)
 	}
-
 	var tables int
 	err = pool.QueryRow(ctx, `
-		SELECT count(*) FROM information_schema.tables
-		WHERE table_schema = 'public' AND table_name IN ('users', 'refresh_tokens')
+			SELECT count(*) FROM information_schema.tables
+			WHERE table_schema = 'public'
+			AND table_name IN (
+					'users',
+					'refresh_tokens',
+					'hiragana',
+					'hiragana_attempts',
+					'katakana',
+					'katakana_attempts'
+			)
 	`).Scan(&tables)
 	if err != nil {
 		t.Fatalf("check tables: %v", err)
 	}
-	if tables != 2 {
-		t.Errorf("expected users + refresh_tokens tables, found %d", tables)
+	if tables != 6 {
+		t.Errorf("expected all application tables, found %d of 6", tables)
 	}
 }
