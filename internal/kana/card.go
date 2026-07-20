@@ -1,4 +1,4 @@
-package katakana
+package kana
 
 type Card struct {
 	ID        int64

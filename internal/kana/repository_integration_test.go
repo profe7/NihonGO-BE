@@ -1,4 +1,4 @@
-package katakana
+package kana
 
 import (
 	"context"
@@ -10,9 +10,50 @@ import (
 	"nihongo/internal/user"
 )
 
+func TestRepository_SelectsScriptCardTable(t *testing.T) {
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		script    Script
+		character string
+		romaji    string
+	}{
+		{
+			name:      "hiragana",
+			script:    Hiragana,
+			character: "あ",
+			romaji:    "a",
+		},
+		{
+			name:      "katakana",
+			script:    Katakana,
+			character: "ア",
+			romaji:    "a",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := NewRepository(pool, test.script)
+			card, err := repository.Random(ctx, []string{test.character})
+			if err != nil {
+				t.Fatalf("Random() error: %v", err)
+			}
+			if card.Character != test.character {
+				t.Errorf("character = %q, want %q", card.Character, test.character)
+			}
+			if card.Romaji != test.romaji {
+				t.Errorf("romaji = %q, want %q", card.Romaji, test.romaji)
+			}
+		})
+	}
+}
+
 func TestRepository_Random(t *testing.T) {
 	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
-	repository := NewRepository(pool)
+	repository := NewRepository(pool, Katakana)
 	ctx := context.Background()
 
 	t.Run("without filter", func(t *testing.T) {
@@ -54,7 +95,7 @@ func TestRepository_Random(t *testing.T) {
 
 func TestRepository_RandomOthers(t *testing.T) {
 	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
-	repository := NewRepository(pool)
+	repository := NewRepository(pool, Katakana)
 	ctx := context.Background()
 
 	excluded, err := repository.Random(ctx, []string{"ア"})
@@ -116,7 +157,7 @@ func TestRepository_RandomOthers(t *testing.T) {
 
 func TestRepository_FindByID(t *testing.T) {
 	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
-	repository := NewRepository(pool)
+	repository := NewRepository(pool, Katakana)
 	ctx := context.Background()
 
 	expected, err := repository.Random(ctx, []string{"ア"})
@@ -144,7 +185,7 @@ func TestRepository_FindByID(t *testing.T) {
 
 func TestRepository_RecordAttempt(t *testing.T) {
 	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
-	repository := NewRepository(pool)
+	repository := NewRepository(pool, Katakana)
 	ctx := context.Background()
 
 	if _, err := pool.Exec(
@@ -203,58 +244,82 @@ func TestRepository_RecordAttempt(t *testing.T) {
 
 func TestRepository_Progress(t *testing.T) {
 	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
-	repository := NewRepository(pool)
 	ctx := context.Background()
 
-	if _, err := pool.Exec(
-		ctx,
-		`TRUNCATE users RESTART IDENTITY CASCADE`,
-	); err != nil {
-		t.Fatalf("truncate users: %v", err)
+	tests := []struct {
+		name      string
+		script    Script
+		character string
+		email     string
+	}{
+		{
+			name:      "hiragana",
+			script:    Hiragana,
+			character: "あ",
+			email:     "hiragana-progress@example.com",
+		},
+		{
+			name:      "katakana",
+			script:    Katakana,
+			character: "ア",
+			email:     "katakana-progress@example.com",
+		},
 	}
 
-	users := user.NewRepository(pool)
-	createdUser, err := users.Create(
-		ctx,
-		"katakana-progress@example.com",
-		"password-hash",
-	)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := pool.Exec(
+				ctx,
+				`TRUNCATE users RESTART IDENTITY CASCADE`,
+			); err != nil {
+				t.Fatalf("truncate users: %v", err)
+			}
 
-	progress, err := repository.Progress(ctx, createdUser.ID)
-	if err != nil {
-		t.Fatalf("load empty progress: %v", err)
-	}
-	if progress.TotalAttempts != 0 || progress.CorrectAttempts != 0 {
-		t.Fatalf("empty progress = %+v, want zero values", progress)
-	}
+			users := user.NewRepository(pool)
+			createdUser, err := users.Create(
+				ctx,
+				test.email,
+				"password-hash",
+			)
+			if err != nil {
+				t.Fatalf("create user: %v", err)
+			}
 
-	card, err := repository.Random(ctx, []string{"ア"})
-	if err != nil {
-		t.Fatalf("load card: %v", err)
-	}
+			repository := NewRepository(pool, test.script)
+			progress, err := repository.Progress(ctx, createdUser.ID)
+			if err != nil {
+				t.Fatalf("load empty progress: %v", err)
+			}
+			if progress.TotalAttempts != 0 || progress.CorrectAttempts != 0 {
+				t.Fatalf("empty progress = %+v, want zero values", progress)
+			}
 
-	for _, correct := range []bool{true, false, true} {
-		if err := repository.RecordAttempt(
-			ctx,
-			createdUser.ID,
-			card.ID,
-			correct,
-		); err != nil {
-			t.Fatalf("record attempt: %v", err)
-		}
-	}
+			card, err := repository.Random(ctx, []string{test.character})
+			if err != nil {
+				t.Fatalf("load card: %v", err)
+			}
 
-	progress, err = repository.Progress(ctx, createdUser.ID)
-	if err != nil {
-		t.Fatalf("load progress: %v", err)
-	}
-	if progress.TotalAttempts != 3 {
-		t.Errorf("TotalAttempts = %d, want 3", progress.TotalAttempts)
-	}
-	if progress.CorrectAttempts != 2 {
-		t.Errorf("CorrectAttempts = %d, want 2", progress.CorrectAttempts)
+			for _, correct := range []bool{true, false, true} {
+				if err := repository.RecordAttempt(
+					ctx,
+					createdUser.ID,
+					card.ID,
+					correct,
+				); err != nil {
+					t.Fatalf("record attempt: %v", err)
+				}
+			}
+
+			progress, err = repository.Progress(ctx, createdUser.ID)
+			if err != nil {
+				t.Fatalf("load progress: %v", err)
+			}
+			if progress.TotalAttempts != 3 {
+				t.Errorf("TotalAttempts = %d, want 3", progress.TotalAttempts)
+			}
+			if progress.CorrectAttempts != 2 {
+				t.Errorf("CorrectAttempts = %d, want 2", progress.CorrectAttempts)
+			}
+		})
 	}
 }
