@@ -45,6 +45,7 @@ func NewRouter(pool *pgxpool.Pool, cfg config.Config) *gin.Engine {
 
 		protected.GET("/hiragana/quiz", hiraganaHandler.Quiz)
 		protected.POST("/hiragana/quiz/answer", hiraganaHandler.Answer)
+		protected.GET("/hiragana/stats", hiraganaHandler.Stats)
 	}
 
 	return r

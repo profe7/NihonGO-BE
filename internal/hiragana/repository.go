@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"nihongo/internal/study"
 )
 
 var ErrNotFound = errors.New("hiragana card not found")
@@ -85,4 +87,26 @@ func (r *Repository) RecordAttempt(ctx context.Context, userID, cardID int64, co
 		return fmt.Errorf("record hiragana attempt: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) Progress(
+	ctx context.Context,
+	userID int64,
+) (study.Progress, error) {
+	const q = `
+			SELECT
+					COUNT(*),
+					COUNT(*) FILTER (WHERE correct)
+			FROM hiragana_attempts
+			WHERE user_id = $1`
+
+	var progress study.Progress
+	if err := r.pool.QueryRow(ctx, q, userID).Scan(
+		&progress.TotalAttempts,
+		&progress.CorrectAttempts,
+	); err != nil {
+		return study.Progress{},
+			fmt.Errorf("load hiragana progress for user %d: %w", userID, err)
+	}
+	return progress, nil
 }

@@ -11,11 +11,14 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"nihongo/internal/study"
 )
 
 const (
 	quizPath   = "/hiragana/quiz"
 	answerPath = "/hiragana/quiz/answer"
+	statsPath  = "/hiragana/stats"
 )
 
 type fakeStore struct {
@@ -23,6 +26,7 @@ type fakeStore struct {
 	randomOthersFn  func(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	findByIDFn      func(ctx context.Context, id int64) (Card, error)
 	recordAttemptFn func(ctx context.Context, userID, cardID int64, correct bool) error
+	progressFn      func(ctx context.Context, userID int64) (study.Progress, error)
 }
 
 func (f fakeStore) Random(ctx context.Context, characters []string) (Card, error) {
@@ -41,6 +45,13 @@ func (f fakeStore) RecordAttempt(ctx context.Context, userID, cardID int64, corr
 	return f.recordAttemptFn(ctx, userID, cardID, correct)
 }
 
+func (f fakeStore) Progress(
+	ctx context.Context,
+	userID int64,
+) (study.Progress, error) {
+	return f.progressFn(ctx, userID)
+}
+
 func setup(store Store) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	h := NewHandler(store)
@@ -51,6 +62,7 @@ func setup(store Store) *gin.Engine {
 	})
 	r.GET(quizPath, h.Quiz)
 	r.POST(answerPath, h.Answer)
+	r.GET(statsPath, h.Stats)
 	return r
 }
 
@@ -376,5 +388,99 @@ func TestParseCharacters(t *testing.T) {
 				t.Fatalf("parseCharacters(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestStats(t *testing.T) {
+	var gotUserID int64
+
+	store := fakeStore{
+		progressFn: func(
+			ctx context.Context,
+			userID int64,
+		) (study.Progress, error) {
+			gotUserID = userID
+			return study.Progress{
+				TotalAttempts:   3,
+				CorrectAttempts: 2,
+			}, nil
+		},
+	}
+
+	r := setup(store)
+	w := doJSON(r, http.MethodGet, statsPath, "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if gotUserID != 1 {
+		t.Errorf("userID = %d, want 1", gotUserID)
+	}
+
+	var response statsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.TotalAttempts != 3 {
+		t.Errorf("TotalAttempts = %d, want 3", response.TotalAttempts)
+	}
+	if response.CorrectAttempts != 2 {
+		t.Errorf("CorrectAttempts = %d, want 2", response.CorrectAttempts)
+	}
+
+	wantAccuracy := (study.Progress{
+		TotalAttempts:   3,
+		CorrectAttempts: 2,
+	}).AccuracyPercent()
+
+	if response.AccuracyPercent != wantAccuracy {
+		t.Errorf(
+			"AccuracyPercent = %v, want %v",
+			response.AccuracyPercent,
+			wantAccuracy,
+		)
+	}
+}
+
+func TestStats_ProgressFailureIs500(t *testing.T) {
+	store := fakeStore{
+		progressFn: func(
+			ctx context.Context,
+			userID int64,
+		) (study.Progress, error) {
+			return study.Progress{}, errors.New("db down")
+		},
+	}
+
+	r := setup(store)
+	w := doJSON(r, http.MethodGet, statsPath, "")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"status = %d, want 500; body=%s",
+			w.Code,
+			w.Body.String(),
+		)
+	}
+}
+
+func TestStats_Unauthorized(t *testing.T) {
+	store := fakeStore{}
+
+	h := NewHandler(store)
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.GET(statsPath, h.Stats)
+
+	w := doJSON(r, http.MethodGet, statsPath, "")
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want 401; body=%s",
+			w.Code,
+			w.Body.String(),
+		)
 	}
 }

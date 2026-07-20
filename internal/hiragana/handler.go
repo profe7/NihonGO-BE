@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
 	"nihongo/internal/auth"
+	"nihongo/internal/study"
 )
 
 type Store interface {
@@ -15,6 +17,13 @@ type Store interface {
 	RandomOthers(ctx context.Context, excludeID int64, n int, characters []string) ([]Card, error)
 	FindByID(ctx context.Context, id int64) (Card, error)
 	RecordAttempt(ctx context.Context, userID, cardID int64, correct bool) error
+	Progress(ctx context.Context, userID int64) (study.Progress, error)
+}
+
+type statsResponse struct {
+	TotalAttempts   int64   `json:"total_attempts"`
+	CorrectAttempts int64   `json:"correct_attempts"`
+	AccuracyPercent float64 `json:"accuracy_percent"`
 }
 
 type Handler struct {
@@ -52,7 +61,7 @@ func (h *Handler) Quiz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"id":        target.ID,
 		"character": target.Character,
-		"options":   BuildOptions(target.Romaji, distractorRomaji),
+		"options":   study.BuildOptions(target.Romaji, distractorRomaji),
 	})
 }
 
@@ -112,5 +121,27 @@ func (h *Handler) Answer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"correct":        correct,
 		"correct_answer": card.Romaji,
+	})
+}
+
+func (h *Handler) Stats(c *gin.Context) {
+	userID, ok := auth.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	progress, err := h.cards.Progress(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "could not load hiragana statistics",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, statsResponse{
+		TotalAttempts:   progress.TotalAttempts,
+		CorrectAttempts: progress.CorrectAttempts,
+		AccuracyPercent: progress.AccuracyPercent(),
 	})
 }

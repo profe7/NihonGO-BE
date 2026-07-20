@@ -1,4 +1,4 @@
-package hiragana
+package study
 
 import "math/rand/v2"
 
