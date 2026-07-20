@@ -5,14 +5,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"nihongo/internal/db"
+	"nihongo/internal/testutil"
 	"nihongo/internal/user"
 )
 
 func TestRepository_Progress(t *testing.T) {
-	pool := hiraganaTestPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	ctx := context.Background()
 
 	_, err := pool.Exec(ctx,
@@ -64,27 +62,4 @@ func TestRepository_Progress(t *testing.T) {
 	if progress.CorrectAttempts != 2 {
 		t.Errorf("CorrectAttempts = %d; want 2", progress.CorrectAttempts)
 	}
-}
-
-func hiraganaTestPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping integration test")
-	}
-
-	ctx := context.Background()
-	pool, err := db.Connect(ctx, url)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-
-	if err := db.RunMigrations(ctx, pool, os.DirFS("../..")); err != nil {
-		pool.Close()
-		t.Fatalf("migrations: %v", err)
-	}
-
-	t.Cleanup(pool.Close)
-	return pool
 }

@@ -9,26 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"nihongo/internal/db"
+	"nihongo/internal/testutil"
 )
-
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping integration test")
-	}
-	ctx := context.Background()
-	pool, err := db.Connect(ctx, url)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	if err := db.RunMigrations(ctx, pool, os.DirFS("../..")); err != nil {
-		t.Fatalf("migrations: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
 
 func truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
@@ -39,7 +21,7 @@ func truncate(t *testing.T, pool *pgxpool.Pool) {
 }
 
 func TestRepository_CreateAndFind(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 	repo := NewRepository(pool)
 	ctx := context.Background()
@@ -79,7 +61,7 @@ func TestRepository_CreateAndFind(t *testing.T) {
 }
 
 func TestRepository_DuplicateEmail(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 	repo := NewRepository(pool)
 	ctx := context.Background()
@@ -94,7 +76,7 @@ func TestRepository_DuplicateEmail(t *testing.T) {
 }
 
 func TestRepository_FindMissing(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 	repo := NewRepository(pool)
 	ctx := context.Background()
@@ -108,7 +90,7 @@ func TestRepository_FindMissing(t *testing.T) {
 }
 
 func TestRefreshRepository(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 	users := NewRepository(pool)
 	refresh := NewRefreshRepository(pool)
@@ -158,7 +140,7 @@ func TestRefreshRepository(t *testing.T) {
 }
 
 func TestRefreshRepository_Rotate(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 
 	ctx := context.Background()
@@ -206,7 +188,7 @@ func TestRefreshRepository_Rotate(t *testing.T) {
 }
 
 func TestRefreshRepository_RotateRollsBackOnInsertFailure(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 
 	ctx := context.Background()
@@ -243,7 +225,7 @@ func TestRefreshRepository_RotateRollsBackOnInsertFailure(t *testing.T) {
 }
 
 func TestRefreshRepository_RotateRejectsAndDeletesExpiredToken(t *testing.T) {
-	pool := testPool(t)
+	pool := testutil.OpenDatabase(t, os.DirFS("../.."))
 	truncate(t, pool)
 
 	ctx := context.Background()
